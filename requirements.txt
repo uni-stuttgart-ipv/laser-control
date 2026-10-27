@@ -1,0 +1,3 @@
+# Runtime dependencies are declared in pyproject.toml ([project] dependencies).
+# This installs the app and them, so `pip install -r requirements.txt` keeps working.
+-e .

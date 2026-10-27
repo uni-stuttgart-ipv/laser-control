@@ -1,0 +1,120 @@
+# Laser Control: project metadata, packaging (Briefcase) and tool settings.
+#
+# [project] is the single source of the version, description, authors, license
+# and runtime dependencies: pip/hatch use it directly and Briefcase merges it
+# into the app (its `requires` list is added to `dependencies`).
+#
+#   pip install -e ".[dev]"            # development install (tests, lint, Briefcase)
+#   laser-control --simulate           # or: python run_laser_control.py --simulate
+#
+# Building the app: see docs/building.md.
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "laser-control"
+version = "0.1.0"                       # keep in sync with src/laser_app/__init__.py
+description = "Desktop app to control a lab laser: manual CW power or camera-triggered pulses."
+authors = [
+  { name = "Yamandeep Soni", email = "st195620@stud.uni-stuttgart.de" },
+]
+maintainers = [
+  { name = "Institut für Photovoltaik (ipv)", email = "ipv@ipv.uni-stuttgart.de" },
+]
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Science/Research",
+  "Operating System :: MacOS :: MacOS X",
+  "Operating System :: Microsoft :: Windows",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Scientific/Engineering :: Physics",
+  "Topic :: Scientific/Engineering :: Interface Engine/Protocol Translator",
+]
+keywords = [
+  "laser",
+  "laser-control",
+  "serial",
+  "pyserial",
+  "camera-trigger",
+  "pulsed",
+  "cw",
+  "tkinter",
+  "gui",
+  "university-of-stuttgart",
+  "ipv",
+]
+dependencies = [
+  "pyserial>=3.5",
+  "pillow>=10",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=7",
+  "pytest-timeout>=2",
+  "pyflakes>=3",
+  "briefcase",
+]
+
+[project.urls]
+Homepage = "https://github.com/uni-stuttgart-ipv/Laser-Control"
+Repository = "https://github.com/uni-stuttgart-ipv/Laser-Control.git"
+Issues = "https://github.com/uni-stuttgart-ipv/Laser-Control/issues"
+Changelog = "https://github.com/uni-stuttgart-ipv/Laser-Control/blob/main/CHANGELOG.md"
+
+[project.scripts]
+laser-control = "laser_app.__main__:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/laser_app"]
+
+# ---------------------------------------------------------------------------
+# Briefcase (https://briefcase.beeware.org); see docs/building.md.
+# Version, description, author, license and dependencies come from [project].
+# ---------------------------------------------------------------------------
+[tool.briefcase]
+bundle = "com.ipv-uni-stuttgart"        # app id: com.ipv-uni-stuttgart.laser-app
+url = "https://www.ipv.uni-stuttgart.de"
+
+[tool.briefcase.app.laser_app]
+formal_name = "Laser Control"
+long_description = """Tkinter desktop app that drives the laser over its serial port.
+Manual mode sets the CW output power; Camera mode switches the laser to pulsed,
+externally modulated operation at 50 mW so a camera trigger gates the beam."""
+icon = "resources/laser_control"        # .icns (macOS), .ico (Windows), -<size>.png (Linux)
+sources = ["src/laser_app"]
+
+# Briefcase's Python for macOS and Windows has Tkinter removed. tools/collect_tk.py
+# copies it from the python.org install that runs Briefcase into build_support/;
+# these sources add it to the app. (Linux builds use the system Python, which
+# has Tkinter.)
+[tool.briefcase.app.laser_app.macOS]
+universal_build = true
+sources = [
+  "build_support/tk-macos/tkinter",
+  "build_support/tk-macos/tkinter_runtime",
+]
+
+[tool.briefcase.app.laser_app.windows]
+sources = [
+  "build_support/tk-windows/tkinter",
+  "build_support/tk-windows/tkinter_runtime",
+]
+
+# ---------------------------------------------------------------------------
+# Tests
+# ---------------------------------------------------------------------------
+[tool.pytest.ini_options]
+pythonpath = ["src", "tests", "tools"]
+testpaths = ["tests"]
+timeout = 60
