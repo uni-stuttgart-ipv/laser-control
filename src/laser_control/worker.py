@@ -143,7 +143,9 @@ class LaserWorker(threading.Thread):
         self._results = results
         self._jobs: queue.PriorityQueue[tuple[int, int, Job | None]] = queue.PriorityQueue()
         self._laser: Laser | None = None
-        self._stop = threading.Event()
+        # Not ``self._stop``: threading.Thread has a private ``_stop()`` method that
+        # join() calls on Python 3.12, and shadowing it breaks join().
+        self._stop_requested = threading.Event()
         self.generation = 0
         """Set by the controller; a plain int write is atomic."""
         self.on_epoch = 0
@@ -157,7 +159,7 @@ class LaserWorker(threading.Thread):
 
     def stop(self) -> None:
         """Ask the thread to exit after the current job. Does not close the port."""
-        self._stop.set()
+        self._stop_requested.set()
         self._jobs.put((-1, 0, None))
 
     def stop_when_idle(self) -> None:
@@ -167,7 +169,7 @@ class LaserWorker(threading.Thread):
     # ---- worker thread ----
 
     def run(self) -> None:
-        while not self._stop.is_set():
+        while not self._stop_requested.is_set():
             _, _, job = self._jobs.get()
             if job is None:
                 break
