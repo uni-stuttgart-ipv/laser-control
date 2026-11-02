@@ -166,3 +166,34 @@ def test_dial_image_cache_is_bounded(app):
 def test_smoke_test_entry_point(sims):
     from laser_control.app import smoke_test
     assert smoke_test() == 0
+
+
+def test_pressed_buttons_stay_in_place(app):
+    """Swapping a button to its pressed image must not move it.
+
+    State images can have different shadow/glow margins (for example the
+    amber Connect/Retry pill glows, its pressed image doesn't), so the item
+    has to be re-placed on every swap.
+    """
+    root, ctl, win = app
+    connect_and_confirm_off(root, ctl, win)  # draws Disconnect, the ± keys and the laser key
+    win._set_power(20.0)  # makes Apply appear
+    c = win.canvas
+
+    def centre(tag):
+        item = c.find_withtag(f"{tag}.bg")[0]
+        x, y = c.coords(item)
+        img = c.itemcget(item, "image")
+        return x + root.tk.call("image", "width", img) / 2, y + root.tk.call("image", "height", img) / 2
+
+    checked = []
+    for tag, button in list(win._buttons.items()):
+        if "press" not in button.bg or not c.find_withtag(f"{tag}.bg"):
+            continue
+        before = centre(tag)
+        win._show(tag, "press")
+        during = centre(tag)
+        win._show(tag, "normal")
+        assert during == pytest.approx(before, abs=0.5), tag
+        checked.append(tag)
+    assert {"btn:connect", "btn:apply", "btn:key"} <= set(checked), checked

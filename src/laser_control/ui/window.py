@@ -106,6 +106,8 @@ class MainWindow:
         self.banner: UserMessage | None = None
         self.height = 0
         self._buttons: dict[str, _Button] = {}
+        self._origins: dict[str, tuple[float, float]] = {}
+        """Shape position (logical px) of each ``<tag>.bg`` image, for re-placing swapped states."""
         self._hover: str | None = None
         self._pressed: str | None = None
         self._press_box: tuple[int, int, int, int] | None = None
@@ -413,6 +415,11 @@ class MainWindow:
         if b.bg:
             sprite = b.bg.get(state) or b.bg["normal"]
             c.itemconfigure(f"{tag}.bg", image=sprite.photo)
+            # State images can have different shadow/glow margins (``pad``), so
+            # re-place the item to keep the shape itself exactly where it was.
+            origin = self._origins.get(f"{tag}.bg")
+            if origin:
+                c.coords(f"{tag}.bg", self.art.px(origin[0]) - sprite.pad, self.art.px(origin[1]) - sprite.pad)
         if b.fg:
             sprite = b.fg.get(state) or b.fg["normal"]
             c.itemconfigure(f"{tag}.fg", image=sprite.photo)
@@ -429,6 +436,10 @@ class MainWindow:
     # ================================================================ drawing helpers
 
     def _img(self, x: float, y: float, sprite: Sprite, tags=()) -> int:
+        """Place a sprite so its *shape* (not its shadow margin) starts at ``(x, y)``."""
+        for tag in tags:
+            if tag.endswith(".bg"):
+                self._origins[tag] = (x, y)
         return self.canvas.create_image(self.art.px(x) - sprite.pad, self.art.px(y) - sprite.pad,
                                         image=sprite.photo, anchor="nw", tags=tags)
 
@@ -473,6 +484,7 @@ class MainWindow:
             editor.destroy()
         c.delete("all")
         self._buttons.clear()
+        self._origins.clear()
 
         y = 18
         self._draw_header(s, y)
