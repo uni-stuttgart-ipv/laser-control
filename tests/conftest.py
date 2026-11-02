@@ -2,12 +2,27 @@
 
 from __future__ import annotations
 
+import gc
 import time
 from typing import Callable
 
 import pytest
 
 from laser_control import sequences, sim
+
+
+@pytest.fixture(autouse=True)
+def collect_garbage_on_main_thread():
+    """Free leftovers from earlier tests here, on the main thread, before each test.
+
+    Destroyed Tk windows from the window tests linger in reference cycles until
+    Python's garbage collector runs, and it runs in whichever thread happens to
+    trigger it. Tk objects must be freed on the thread that created them: when
+    the collector ran inside a laser worker thread on Linux CI, freeing a Tk
+    interpreter there blocked the worker and a worker test timed out.
+    """
+    gc.collect()
+    yield
 
 
 @pytest.fixture
