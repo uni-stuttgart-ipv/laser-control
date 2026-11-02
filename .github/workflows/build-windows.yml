@@ -1,0 +1,52 @@
+# Test on Windows and macOS, then build the Windows exe and installer.
+# Runs on version tags (v0.1.0, ...) or by hand from the Actions tab.
+name: build-windows
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -c packaging/constraints.txt -e ".[dev]"
+      - run: pytest -q
+
+  build:
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          architecture: x64
+      - run: pip install -c packaging/constraints.txt -e ".[build]"
+      - run: pyinstaller --noconfirm --clean packaging\LaserControl.spec
+      - name: Smoke test the packaged exe
+        shell: pwsh
+        run: |
+          $p = Start-Process dist\LaserControl\LaserControl.exe -ArgumentList '--smoke-test' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "smoke test failed with exit code $($p.ExitCode)" }
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $version = python -c "import laser_control; print(laser_control.__version__)"
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=$version" packaging\installer.iss
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LaserControl-windows
+          path: |
+            dist/LaserControl/
+            packaging/Output/*.exe

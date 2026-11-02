@@ -1,157 +1,154 @@
 # Laser Control
 
-A small desktop app for driving a lab laser over its serial port. It is written in Python with Tkinter and has a dark, tile-based look. It has two control modes:
+A small desktop app for controlling the lab laser over a serial (COM) port. It has two modes:
 
-- **Manual**: continuous-wave (CW) output at a power you type in.
-- **Camera**: pulsed output with external modulation at 50 mW, so a camera's trigger output switches the beam.
+- **Camera:** the laser is pulsed and its power follows the camera's analog signal, calibrated at 50 mW.
+- **Manual:** continuous output at a power you set on a dial.
 
-![Laser Control: not connected, Manual mode with the laser on, Camera mode, and a power value the laser refused](docs/screenshots/overview.png)
+A round key turns the laser on and off. Built with Python, Tkinter and Pillow; it runs on Windows 11 x64 and can be developed on macOS.
 
-> **Laser safety.** This software switches a real laser on and off. Wear eye protection rated for your laser and follow your lab's laser-safety rules. The software is not a safety interlock. Read the [Safety behaviour](#safety-behaviour) section and the [License](#license) disclaimer.
-
----
-
-## Contents
-
-- [Features](#features)
-- [Requirements](#requirements)
-- [Quick start (run from source)](#quick-start-run-from-source)
-- [Using the app](#using-the-app)
-- [Safety behaviour](#safety-behaviour)
-- [Settings and logs](#settings-and-logs)
-- [Troubleshooting](#troubleshooting)
-- [Project layout](#project-layout)
-- [Documentation](#documentation)
-- [Authors](#authors)
-- [License](#license)
-
----
-
-## Features
-
-- **Connection.** Click the port tile to pick from the serial ports detected on the computer, followed by COM1–COM20. The orange **Connect** button next to it (or the plug button, top right) opens the port; once connected it becomes **Disconnect**, the status line below it reads **● Connected**, and the card turns muted orange.
-- **Control mode.** Two tiles:
-  - **Manual** shows a **Power** field (mW) with **Apply**. The app sets no power limits of its own.
-  - **Camera** shows nothing else and always uses 50 mW.
-- **Laser.** A square power button. It is **green when the laser is on**, **red when it is off**, and grey until you connect.
-- **Readback.** The bottom bar shows the setpoint (mW), the diode current (mA) and the mode; the latest message sits just above it.
-- **Simulator.** `--simulate` runs the whole app against a fake laser, so you can try it without hardware.
-- **Settings.** The last port, mode and manual power are remembered between runs.
-- **Platforms.** Runs on Windows and macOS, and also works on Linux. It can be packaged as a native app with [Briefcase](https://briefcase.beeware.org) (see [docs/building.md](docs/building.md)).
+> **Safety.** This software is not an interlock. If the USB cable is unplugged or the app crashes, the laser keeps its last state.
+>
+> The laser cannot report whether it is emitting, so the app only shows **Off** once the laser has answered an off command.
+> - After connecting, the state is **Unknown** until you press the key once, which sends off.
+> - If an off cannot be confirmed (cable pulled, laser silent), the app shows **May still be on** in red until a later off is confirmed.
+> - While connected, Esc (with the window focused) and the key both send off whenever the laser is on or its state is unknown.
 
 ## Requirements
 
-- Python **3.10 or newer**, with Tkinter. The python.org installers include it. To build apps with Briefcase you need 3.11 or newer.
-- [`pyserial`](https://pypi.org/project/pyserial/) and [`Pillow`](https://pypi.org/project/pillow/). They are declared in `pyproject.toml` and installed by the commands below. The laser's serial protocol is implemented in the app itself (`src/laser_app/hardware/laser.py`).
+- **Python 3.12 or 3.13 with Tk 8.6.** The python.org installers include it. Some pyenv and Homebrew builds don't.
+- **pyserial and Pillow**, installed automatically.
+- **The laser's USB-serial driver** on the PC. Check the COM number in Device Manager → Ports (COM & LPT).
 
-## Quick start (run from source)
+## Quick start
 
-Run these from the project folder.
+**Windows**, with Python 3.13 x64 from python.org:
 
-**macOS / Linux**
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e .
-laser-control --simulate                    # try it with the simulated laser
-laser-control                               # with the real laser plugged in
-```
-
-**Windows**
 ```bat
-py -m venv .venv
+py -3.13 -m venv .venv
 .venv\Scripts\activate
-pip install -e .
-laser-control --simulate
-laser-control
+pip install -c packaging\constraints.txt -e ".[dev]"
+python -m laser_control --port COM3
 ```
 
-`pip install -e .` installs the app in editable mode (code changes take effect without reinstalling) and adds the `laser-control` command. `python -m laser_app` and `python run_laser_control.py` start the same app.
+**macOS**, with the python.org 3.13 installer:
 
-| Option | Meaning |
+```sh
+/Library/Frameworks/Python.framework/Versions/3.13/bin/python3.13 -m venv .venv
+source .venv/bin/activate
+pip install -c packaging/constraints.txt -e ".[dev]"
+python -m laser_control --simulate
+```
+
+**Command-line options:**
+
+| Option | What it does |
 |---|---|
-| `--simulate` | Use a simulated laser. Pick the `SIM` port and connect. |
-| `--log-level DEBUG` | Log every command sent to the laser. Other levels are `INFO` (the default), `WARNING` and `ERROR`. |
+| `--simulate` | Use a simulated laser instead of real ports. `LASER_CONTROL_SIM=1` does the same. |
+| `--port COM3` | Preselect a port. |
+| `--timeout 2.0` | Serial read/write timeout in seconds, for this run only. |
+| `--poll-ms 1000` | How often the set point and current are read, for this run only. |
+| `--debug` | Log every serial line. |
+| `--smoke-test` | Draw the window against the simulator and exit 0. Checks a build without a laser. |
 
-## Using the app
+**Simulated ports** (`--simulate`):
 
-1. **Connection.** Click the port tile, pick the port, then click **Connect** (or the plug button).
-   - On Windows, Device Manager → *Ports (COM & LPT)* shows which COM port the laser uses.
-   - On macOS, the port is `/dev/cu.usbserial-…` or `/dev/cu.usbmodem…`.
-   - Click the refresh button (top left) after plugging the laser in.
-   - The laser always starts with the beam **off**.
-2. **Control mode.**
-   - **Manual.** Type a power in mW and click **Apply** (or press Enter).
-     - Any number is sent; the app sets no limits.
-     - Negative values and values above the laser's maximum (read from the laser when connecting) are refused: the field turns red and shows *Refused by the laser*. Nothing is sent and the connection stays open.
-   - **Camera.** The app puts the laser in pulsed, externally modulated mode at 50 mW. The camera's trigger output then switches the beam.
-3. **Laser.** Click the power button to switch the laser on (green) or off (red). In Camera mode, "on" means *armed*: the beam follows the camera trigger.
-
-## Safety behaviour
-
-The app is built to fail safe:
-
-- The laser is switched **off** when you connect, disconnect, change mode or close the window, and after any communication error.
-- "Off" is always **read back** from the laser. If the app cannot confirm it, a red message tells you to switch the laser off at the controller.
-- **Turn off** is handled before any other queued command, and it cancels anything still waiting. A queued "turn on" can never run after "turn off".
-- If the laser stops answering, the app turns it off as far as it can and disconnects. It does not keep showing stale values.
-- Switching back to **Manual** restores your last manual power, never the 50 mW camera power. If that power is outside the laser's limits, the laser's minimum is used instead.
-- Closing the window while the laser is on asks for confirmation first.
-- If the interlock is open, **Turn on** shows the laser's own refusal message (for example *Interlock open*) and the laser stays off.
-
-## Settings and logs
-
-| | Windows | macOS | Linux |
-|---|---|---|---|
-| Settings | `%APPDATA%\LaserControl\settings.json` | `~/Library/Application Support/LaserControl/settings.json` | `~/.config/LaserControl/settings.json` |
-| Logs | `%APPDATA%\LaserControl\logs\` | `~/Library/Logs/LaserControl/` | `~/.config/LaserControl/logs/` |
-
-Logs rotate at 1 MB and five old files are kept. Delete `settings.json` to reset the app.
-
-## Troubleshooting
-
-| Problem | Fix |
+| Port | Behaves like |
 |---|---|
-| `No module named '_tkinter'` when running from source | Your Python has no Tkinter. On macOS with Homebrew, run `brew install python-tk@3.X`, using your Python version. Or install Python from python.org and recreate `.venv`. |
-| No ports in the list / laser not found | Check the cable and click **Refresh**. On Windows, check Device Manager → *Ports*. On macOS, use the `/dev/cu.*` port. |
-| *Refused by the laser* | The power is negative or above the laser's maximum. Nothing was sent. |
-| "Could not confirm the laser is off" | The laser stopped answering. **Switch it off at the controller or key switch**, then check the cable and reconnect. |
-| Communication error, then disconnected | The cable was unplugged or the laser stopped answering. The app tried to turn the laser off. Reconnect when it's fixed. |
-| Problems with the built app (Briefcase) | See [docs/building.md](docs/building.md#troubleshooting). |
-| Need more detail | Run with `--log-level DEBUG` and read the log file (see [Settings and logs](#settings-and-logs)). |
+| `SIM1` | A working laser |
+| `SIM-INTERLOCK` | Refuses to turn on |
+| `SIM-SILENT` | Never answers |
+| `SIM-BUSY` | Port held by another app |
+| `SIM-SMALL` | Max 40 mW, so Camera mode fails |
 
-## Project layout
+## Using it
+
+1. **Connect.** Pick the port from the list and press **Connect**.
+   - The list is re-scanned every time you open it, and ⟳ refreshes it.
+   - If the port is wrong, press **Cancel**.
+   - The selected mode (Camera or Manual) is applied as soon as the laser answers.
+2. **Press the round key once.** The laser state starts as **Unknown**; this press sends off and confirms it.
+3. **Manual mode:** set the power on the dial. You can:
+   - drag the dial;
+   - use − / + (hold Shift for 1 mW steps), the arrow keys or the mouse wheel;
+   - click the reading and type a value.
+
+   Then press **Apply** or Enter. Values above nominal turn red and are applied with a warning. A value you don't apply is never sent: switching modes uses the last applied power.
+4. **Camera mode:** there is no power control, because the camera drives the laser (calibrated at 50 mW). Clicking Camera again repeats the calibration.
+5. **Turn the laser on** with the round key. While it emits:
+   - the key stays pressed in;
+   - the laser card, the window border and the title bar turn amber.
+
+   Switching mode keeps the laser on.
+6. **Turn it off** with the key or with **Esc**. Disconnecting and closing the window also turn it off first. If the laser doesn't confirm, the app asks before closing.
+
+**Settings and logs:**
+- Settings (last port, last applied power) are kept in:
+  - Windows: `%APPDATA%\LaserControl\config.json`
+  - macOS: `~/Library/Application Support/LaserControl/config.json`
+- Logs go to `logs/laser_control.log` in the same folder. Every laser command (connect, on, off, mode, power, disconnect) is logged with its result.
+
+## Tests
+
+No hardware is needed: the tests run the real driver against a simulated serial port.
+
+```sh
+pytest -q                                   # everything, about 10 s
+pytest tests/test_sequences.py -q           # the exact commands each laser sequence sends
+pytest tests/test_controller.py -k interlock
+pytest tests/test_ui.py -q                  # real-window click and drag tests (needs a display)
+```
+
+`tests/test_sequences.py` asserts the exact bytes each sequence sends. If the laser logic ever drifts from the reference script, a test fails.
+
+## Building the Windows app
+
+PyInstaller cannot cross-compile, so the `.exe` must be built on Windows. Either:
+
+- **On a Windows PC:** run `packaging\build_windows.bat` from the repo root. It:
+  1. creates a venv with the pinned versions in `packaging/constraints.txt`;
+  2. runs the tests;
+  3. builds `dist\LaserControl\LaserControl.exe` (one folder) and checks it with `--smoke-test`;
+  4. if Inno Setup 6 is installed, builds `packaging\Output\LaserControl-Setup-<version>.exe`. The installer is per-user, needs no admin rights, and replaces old runtime files cleanly on upgrade.
+- **With GitHub Actions:** push a tag like `v0.1.0`, or run the **build-windows** workflow from the Actions tab. It tests on Windows and macOS, builds and smoke-tests the exe and the installer, and uploads both as artifacts.
+
+The **tests** workflow runs the test suite on every push and pull request.
+
+**Unsigned exe:**
+- On first launch, Windows SmartScreen shows "Windows protected your PC". Choose **More info → Run anyway**.
+- If you downloaded a zip, right-click it → Properties → **Unblock** before extracting.
+- If *Smart App Control* is on (Windows Security → App & browser control), it can block unsigned apps outright. That needs code signing, or switching Smart App Control off.
+
+**Version.** The version lives in one place: `__version__` in `src/laser_control/__init__.py`. The package, the build script, CI and the installer all read it from there.
+
+## How it works
 
 ```
-laser_control/
-├── src/laser_app/          the application
-│   ├── __main__.py         command line, logging, startup
-│   ├── controller.py       worker thread, job queue, safety rules
-│   ├── config.py           settings file and log folder
-│   ├── hardware/           serial driver, laser procedures, simulator, port list
-│   └── ui/                 theme, rendering, layout, widgets and the window
-├── tests/                  pytest suite
-├── tools/                  build helpers: Tkinter for Briefcase, icon, screenshots
-├── resources/              app icon
-├── docs/                   architecture, building, development; README screenshot
-├── run_laser_control.py    run from source
-└── pyproject.toml          Briefcase packaging and pytest settings
+src/laser_control/
+  driver.py      serial driver supplied with the project, unchanged apart from the class name
+  sequences.py   the laser command sequences: the only code that changes the laser's state
+  worker.py      the one thread that owns the serial port; jobs run in priority order (Off first)
+  controller.py  state machine, polling, and the API the window calls (all on the Tk thread)
+  model.py       immutable state snapshot and message types shared with the window
+  errors.py      turns driver exceptions and warnings into plain messages
+  sim.py         simulated laser that replaces the serial port, not the driver
+  app.py         entry point: command line, logging, safe shutdown
+  ui/            the window, drawn on one Tk canvas with Pillow-rendered shapes and icons
+  assets/        window icons
+tests/           pytest suite (simulator-based, plus real-window tests)
+packaging/       PyInstaller spec, Inno Setup script, Windows build script, pinned versions
+resources/       app icon artwork (.ico, .icns, PNGs 16–1024) used for the exe and installer
+.github/         CI: tests on every push; Windows build on tags
 ```
 
-## Documentation
+**Rules the code relies on:**
+- **One serial thread.** Every command gets exactly one reply line, so only the worker thread ever talks to the port. The window never blocks waiting for the laser.
+- **Off must be confirmed.** The driver reports success for a command even when nothing answers. So after `off()` the app reads the laser's status, and only an answer counts as Off.
+- **Off goes first.** Off jumps ahead of everything else in the queue and cancels any queued turn-on. Queued mode and power changes still run, with the laser off.
+- **Mouse input survives redraws.** The window redraws from the current state on every change, and clicks and drags are tracked on the canvas itself, so a status update arriving mid-click can't swallow it.
 
-- [Architecture](docs/architecture.md): threads, safety rules, laser command sequences and how the window is drawn.
-- [Building the app](docs/building.md): Briefcase builds for macOS and Windows, packaging and build troubleshooting.
-- [Development](docs/development.md): setup, tests, tools and code conventions.
-- [Changelog](CHANGELOG.md)
-
-## Authors
-
-- **Author:** Yamandeep Soni ([st195620@stud.uni-stuttgart.de](mailto:st195620@stud.uni-stuttgart.de))
-- **Maintainer:** Institut für Photovoltaik (ipv), University of Stuttgart ([ipv@ipv.uni-stuttgart.de](mailto:ipv@ipv.uni-stuttgart.de))
+**Open decision.** The reference script's line `laser.analog_control_mode = …` assigns to a method, so nothing is sent to the laser. The app keeps that behaviour (`ANALOG_MODE_POLICY = AS_WRITTEN` in `sequences.py`). Changing that one line to `CALL_AFTER_PULSED` sends the real analog-current command after the switch to pulsed mode.
 
 ## License
 
-MIT. See [`LICENSE`](LICENSE). Copyright © 2026 Institut für Photovoltaik (ipv), University of Stuttgart.
-
-The software is provided "as is", without warranty of any kind (see `LICENSE`). You are responsible for operating your laser safely.
+MIT; see `LICENSE`. The serial driver in `src/laser_control/driver.py` is also MIT-licensed; its notice is in `LICENSES/driver-MIT.txt`.

@@ -1,277 +1,418 @@
-"""Controller behaviour against the simulated laser (real driver, in-memory serial port)."""
+"""End-to-end behaviour of the controller against the simulator (no Tk).
 
-import threading
+Safety-related tests check the *simulated laser's* real state
+(``sims[port].emission``), not only what the controller believes.
+"""
+
+from __future__ import annotations
+
+import math
+import time
 
 import pytest
-from helpers import SimFactory, wait_for
 
-from laser_app.controller import (
-    _USER,
-    CAMERA_POWER_MW,
-    OFF_UNCONFIRMED,
-    POWER_REJECTED,
-    LaserController,
-    MessageEvent,
-    Mode,
-    StatusEvent,
-    validate_power,
-)
-from laser_app.hardware.operations import Limits
+from laser_control import sequences
+from laser_control.controller import LaserController, controls_for
+from laser_control.model import ConnState, Emission, Limits, Mode, Snapshot
 
-# A laser whose maximum is below CAMERA_POWER_MW, so Camera mode is unavailable.
-LOW_POWER_LASER = {"max_mw": 40.0, "nominal_mw": 30.0}
+from conftest import commands
 
 
 @pytest.fixture
-def rig(request):
-    """A started controller on simulated lasers; yields ``(ctl, sim)`` (see ``SimFactory``).
+def make(sims, scheduler):
+    made = []
 
-    ``SimulatedDevice`` keyword arguments can be passed with
-    ``@pytest.mark.parametrize("rig", [{...}], indirect=True)``.
-    """
-    sim = SimFactory(**getattr(request, "param", {}))
-    ctl = LaserController(factory=sim, poll_interval_s=0.05)
-    ctl.start()
-    yield ctl, sim
-    ctl.shutdown()
+    def factory(port="SIM1", **kw):
+        ctl = LaserController(scheduler, port=port, timeout_s=0.1, **kw)
+        messages = []
+        ctl.subscribe(lambda s: None, messages.append)
+        made.append(ctl)
+        return ctl, messages
 
-
-def drain(ctl):
-    """Remove and return every queued event."""
-    out = []
-    while not ctl.events.empty():
-        out.append(ctl.events.get())
-    return out
+    yield factory
+    for ctl in made:
+        ctl._worker.stop()
+        ctl._worker.join(timeout=3)  # don't let a slow job leak into the next test's simulator
 
 
-def messages(ctl):
-    """Remove every queued event and return the MessageEvents among them."""
-    return [e for e in drain(ctl) if isinstance(e, MessageEvent)]
+def idle(ctl):
+    return lambda: not ctl.snapshot.busy and ctl.snapshot.applying is None
 
 
-def connect(ctl, mode=Mode.MANUAL, manual=5.0):
-    """Connect to the simulated port and wait until the connect has finished."""
-    ctl.connect("SIM", mode, manual)
-    wait_for(lambda: ctl.status.connected and not ctl.status.busy)
+def connected(ctl, scheduler):
+    """Connect and wait until the selected mode has been applied."""
+    ctl.connect()
+    scheduler.run_until(lambda: ctl.snapshot.connected)
+    scheduler.run_until(idle(ctl))
 
 
-def wait_idle(ctl):
-    """Wait until every job submitted so far has been run or skipped."""
-    done = threading.Event()
-    ctl._submit(_USER, done.set)
-    wait_for(done.is_set)
+def ready(ctl, scheduler):
+    """Connect, then press the key once to confirm the laser is off."""
+    connected(ctl, scheduler)
+    ctl.laser_off()
+    scheduler.run_until(lambda: ctl.snapshot.emission is Emission.OFF and not ctl.snapshot.busy)
 
 
-def test_validate_power():
-    lim = Limits(0.5, 40, 50)
-    assert validate_power(10, lim) is None
-    assert validate_power(50, lim) is None
-    assert validate_power(50.1, lim)
-    assert validate_power(0.4, lim)
-    assert validate_power(float("nan"), lim)
-    assert validate_power(10, None)
+def emitting(ctl, scheduler):
+    ready(ctl, scheduler)
+    ctl.laser_on()
+    scheduler.run_until(lambda: ctl.snapshot.emitting)
 
 
-def test_connect_starts_off_in_manual(rig):
-    ctl, sim = rig
-    connect(ctl)
-    dev = sim.devices[0]
-    assert [c for c in dev.received if c.startswith("L=")][0] == "L=0"   # first: beam off
-    assert ctl.status.limits == Limits(0.5, 40.0, 50.0)
-    assert dev.state["CW"] == 1 and dev.state["EXT"] == 0
-    assert ctl.status.setpoint_mw == 5.0
+# ---- connect and modes ----
+
+def test_connect_applies_selected_manual_mode(make, scheduler, sims):
+    ctl, _ = make(manual_power_mw=7.5)
+    connected(ctl, scheduler)
+    s = ctl.snapshot
+    assert s.limits == Limits(0.5, 50.0, 55.0)
+    assert s.mode is Mode.MANUAL and s.setpoint_mw == 7.5
+    assert commands(sims["SIM1"].log) == ["CW=1", "EXT=0", "P=7.5"]
 
 
-def test_camera_mode_sends_reference_sequence_at_50mw(rig):
-    ctl, sim = rig
-    connect(ctl, mode=Mode.CAMERA)
-    dev = sim.devices[0]
-    seq = [c for c in dev.received if c.split("=")[0] in ("EXT", "CW", "ANA", "P", "CAL")]
-    assert CAMERA_POWER_MW == 50.0
-    assert seq == ["EXT=1", "CW=0", "ANA=1", "P=50.0", "CAL=50.0"]
-    assert ctl.status.mode is Mode.CAMERA
-    assert dev.state["ANA"] == 1 and dev.state["CAL"] == 50.0
+def test_emission_is_unknown_after_connect_until_off_is_confirmed(make, scheduler, sims):
+    ctl, _ = make()
+    connected(ctl, scheduler)
+    assert ctl.snapshot.emission is Emission.UNKNOWN
+    assert not controls_for(ctl.snapshot).laser_on
+    ctl.laser_off()
+    scheduler.run_until(lambda: ctl.snapshot.emission is Emission.OFF)
+    assert controls_for(ctl.snapshot).laser_on
+    assert commands(sims["SIM1"].log)[-1] == "L=0"
 
 
-def test_apply_power_refused_in_camera_mode(rig):
-    ctl, sim = rig
-    connect(ctl, mode=Mode.CAMERA)
-    messages(ctl)
-    ctl.apply_power(10)
-    wait_for(lambda: any(m.level == "error" for m in messages(ctl)))
-    assert sim.devices[0].setpoint == 50.0
+def test_preselected_camera_mode_is_applied_on_connect(make, scheduler, sims):
+    ctl, _ = make()
+    ctl.select_mode(Mode.CAMERA)
+    connected(ctl, scheduler)
+    assert commands(sims["SIM1"].log) == ["EXT=1", "CW=0", "P=50", "CAL=50"]
 
 
-def test_on_off_and_power(rig):
-    ctl, sim = rig
-    connect(ctl)
-    ctl.apply_power(12)
-    ctl.turn_on()
-    wait_for(lambda: ctl.status.emitting)
-    assert sim.devices[0].setpoint == 12
-    ctl.turn_off()
-    wait_for(lambda: not ctl.status.emitting)
+def test_switching_mode_while_emitting_keeps_laser_on(make, scheduler, sims):
+    ctl, _ = make()
+    emitting(ctl, scheduler)
+    sims["SIM1"].log.clear()
+    ctl.select_mode(Mode.CAMERA)
+    scheduler.run_until(idle(ctl))
+    assert ctl.snapshot.emission is Emission.ON
+    assert "L=0" not in sims["SIM1"].log
+    assert commands(sims["SIM1"].log) == ["EXT=1", "CW=0", "P=50", "CAL=50"]
 
 
-def test_power_above_max_is_rejected_without_io_and_keeps_link(rig):
-    ctl, sim = rig
-    connect(ctl)
-    messages(ctl)
-    ctl.apply_power(70)                       # above the laser's maximum: refused before sending
-    errors = []
-    wait_for(lambda: errors.extend(m for m in messages(ctl) if m.level == "error") or errors)
-    assert errors[0].code == POWER_REJECTED
-    assert not any(c.startswith("P=70") for c in sim.devices[0].received)
-    assert ctl.status.connected
+def test_off_does_not_cancel_a_queued_mode_change(make, scheduler, sims):
+    ctl, _ = make()
+    emitting(ctl, scheduler)
+    gate = sims["SIM1"]
+    original = gate.handle
+
+    def slow(line):  # keep the worker busy so the mode job is still queued
+        if line == "?SP":
+            time.sleep(0.2)
+        return original(line)
+
+    gate.handle = slow
+    ctl.refresh_status()
+    time.sleep(0.05)
+    ctl.select_mode(Mode.CAMERA)
+    ctl.laser_off()
+    scheduler.run_until(lambda: idle(ctl)() and ctl.snapshot.emission is Emission.OFF, timeout_s=5)
+    assert ctl.snapshot.mode is Mode.CAMERA
+    assert gate.cw == 0 and gate.ext == 1  # the laser really is in camera mode
+    assert not gate.emission
 
 
-def test_mode_switch_turns_laser_off_and_restores_manual_power(rig):
-    ctl, sim = rig
-    connect(ctl, manual=8.0)
-    ctl.apply_power(12)
-    ctl.turn_on()
-    wait_for(lambda: ctl.status.emitting)
-    ctl.set_mode(Mode.CAMERA)
-    wait_for(lambda: ctl.status.mode is Mode.CAMERA and not ctl.status.busy)
-    assert not sim.devices[0].emitting
-    ctl.set_mode(Mode.MANUAL)
-    wait_for(lambda: ctl.status.mode is Mode.MANUAL and not ctl.status.busy)
-    assert sim.devices[0].setpoint == 12          # last applied manual power, not 50
-    assert sim.devices[0].state["CW"] == 1
+def test_queued_on_is_cancelled_by_off(make, scheduler, sims):
+    ctl, _ = make()
+    ready(ctl, scheduler)
+    gate = sims["SIM1"]
+    original = gate.handle
+    gate.handle = lambda line: (time.sleep(0.2) if line == "?SP" else None) or original(line)
+    ctl.refresh_status()
+    time.sleep(0.05)
+    ctl.laser_on()
+    ctl.laser_off()
+    scheduler.run_until(idle(ctl), timeout_s=5)
+    assert not gate.emission
+    assert ctl.snapshot.emission is Emission.OFF
 
 
-def test_manual_restore_falls_back_to_minimum_when_power_rejected(rig):
-    ctl, sim = rig
-    connect(ctl, mode=Mode.CAMERA, manual=70.0)   # 70 mW is above this laser's max
-    assert sim.devices[0].setpoint == 50.0
-    messages(ctl)
-    ctl.set_mode(Mode.MANUAL)
-    wait_for(lambda: ctl.status.mode is Mode.MANUAL and not ctl.status.busy)
-    assert sim.devices[0].setpoint == 0.5               # the laser minimum, not the camera power
-    assert ctl.status.setpoint_mw == 0.5 and ctl.status.connected
-    assert "P=70.0" not in sim.devices[0].received
-    msgs = messages(ctl)
-    assert any(m.level == "warning" and "0.5 mW instead" in m.text for m in msgs)
+def test_failed_mode_marks_mode_unknown(make, scheduler):
+    ctl, messages = make("SIM-SMALL")
+    ready(ctl, scheduler)
+    ctl.select_mode(Mode.CAMERA)
+    scheduler.run_until(idle(ctl))
+    assert ctl.snapshot.mode is Mode.UNKNOWN
+    assert messages[-1].title == "Camera mode not applied"
+    assert not controls_for(ctl.snapshot).laser_on
 
 
-def test_turn_off_cancels_queued_turn_on(rig):
-    ctl, sim = rig
-    connect(ctl)
-    gate = threading.Event()
-    ctl._submit(_USER, lambda: gate.wait(5))      # keep the worker busy
-    ctl.turn_on()
-    ctl.turn_off()
-    gate.set()
-    wait_idle(ctl)
-    assert not sim.devices[0].emitting
-    assert "L=1" not in sim.devices[0].received
+# ---- power ----
+
+def test_set_power_and_above_nominal_warning(make, scheduler):
+    ctl, messages = make()
+    connected(ctl, scheduler)
+    ctl.set_power(52.0)
+    scheduler.run_until(lambda: ctl.snapshot.setpoint_mw == 52.0)
+    assert messages[-1].title == "Above nominal"
+    assert ctl.manual_power_mw == 52.0
 
 
-def test_interlock_refusal_reported(rig):
-    ctl, sim = rig
-    connect(ctl)
-    sim.devices[0].interlock_closed = False
-    messages(ctl)
-    ctl.turn_on()
-    wait_for(lambda: any("Interlock" in m.text and m.level == "error" for m in messages(ctl)))
-    assert ctl.status.connected and not ctl.status.emitting
+def test_power_above_max_is_not_applied(make, scheduler):
+    ctl, messages = make()
+    connected(ctl, scheduler)
+    ctl.set_power(60.0)
+    scheduler.run_until(lambda: bool(messages))
+    assert messages[-1].title == "Power not applied"
+    assert ctl.snapshot.connected and ctl.manual_power_mw == 5.0
 
 
-def test_comm_error_drops_connection_and_turns_off(rig):
-    ctl, sim = rig
-    connect(ctl)
-    ctl.turn_on()
-    wait_for(lambda: ctl.status.emitting)
-    sim.ports[0].fail_next = OSError("cable unplugged")
-    wait_for(lambda: not ctl.status.connected)
-    assert not sim.ports[0].is_open
+@pytest.mark.parametrize("bad", [math.nan, math.inf, -math.inf])
+def test_non_finite_power_is_rejected_before_sending(make, scheduler, sims, bad):
+    ctl, messages = make()
+    connected(ctl, scheduler)
+    sims["SIM1"].log.clear()
+    assert ctl.set_power(bad) is False
+    scheduler.settle()
+    assert commands(sims["SIM1"].log) == []
+    assert messages[-1].title == "Power not applied"
 
 
-def test_disconnect_and_shutdown_turn_off(rig):
-    ctl, sim = rig
-    connect(ctl)
-    ctl.turn_on()
-    wait_for(lambda: ctl.status.emitting)
+def test_mode_switch_reuses_last_applied_power(make, scheduler, sims):
+    ctl, _ = make(manual_power_mw=5.0)
+    connected(ctl, scheduler)
+    ctl.select_mode(Mode.CAMERA)
+    scheduler.run_until(idle(ctl))
+    sims["SIM1"].log.clear()
+    ctl.select_mode(Mode.MANUAL)
+    scheduler.run_until(idle(ctl))
+    assert commands(sims["SIM1"].log) == ["CW=1", "EXT=0", "P=5.0"]
+
+
+def test_negative_power_is_refused_by_the_driver(make, scheduler, sims):
+    ctl, messages = make()
+    connected(ctl, scheduler)
+    sims["SIM1"].log.clear()
+    ctl.set_power(-1.0)
+    scheduler.run_until(lambda: bool(messages))
+    assert messages[-1].title == "Power not applied"
+    assert commands(sims["SIM1"].log) == []
+
+
+def test_reselecting_the_current_mode_reapplies_it(make, scheduler, sims):
+    ctl, _ = make()
+    ctl.select_mode(Mode.CAMERA)
+    connected(ctl, scheduler)
+    sims["SIM1"].log.clear()
+    ctl.select_mode(Mode.CAMERA)  # e.g. repeat the calibration
+    scheduler.run_until(idle(ctl))
+    assert commands(sims["SIM1"].log) == ["EXT=1", "CW=0", "P=50", "CAL=50"]
+
+
+def test_analog_policy_b_end_to_end(make, scheduler, sims, policy):
+    sequences.ANALOG_MODE_POLICY = sequences.AnalogModePolicy.CALL_AFTER_PULSED
+    ctl, messages = make()
+    ctl.select_mode(Mode.CAMERA)
+    connected(ctl, scheduler)
+    assert commands(sims["SIM1"].log) == ["EXT=1", "CW=0", "ANA=1", "P=50", "CAL=50"]
+    assert ctl.snapshot.mode is Mode.CAMERA and not messages
+
+
+# ---- refusals and port errors ----
+
+def test_interlock_refusal(make, scheduler):
+    ctl, messages = make("SIM-INTERLOCK")
+    ready(ctl, scheduler)
+    ctl.laser_on()
+    scheduler.run_until(lambda: ctl.snapshot.on_refused)
+    assert ctl.snapshot.emission is Emission.OFF
+    assert messages[-1].title == "Laser did not turn on"
+    assert "Interlock open" in messages[-1].text
+
+
+def test_busy_port(make, scheduler):
+    ctl, _ = make("SIM-BUSY")
+    ctl.connect()
+    scheduler.run_until(lambda: ctl.snapshot.conn is ConnState.ERROR)
+    assert ctl.snapshot.last_error.title == "Port busy"
+
+
+def test_silent_port(make, scheduler):
+    ctl, _ = make("SIM-SILENT")
+    ctl.connect()
+    scheduler.run_until(lambda: ctl.snapshot.conn is ConnState.ERROR)
+    assert ctl.snapshot.last_error.title == "No response"
+
+
+def test_select_port_clears_error(make, scheduler):
+    ctl, _ = make("SIM-BUSY")
+    ctl.connect()
+    scheduler.run_until(lambda: ctl.snapshot.conn is ConnState.ERROR)
+    ctl.select_port("SIM1")
+    assert ctl.snapshot.conn is ConnState.DISCONNECTED and ctl.snapshot.last_error is None
+
+
+def test_cancel_connect(make, scheduler, sims):
+    ctl, _ = make()
+    original = sims["SIM1"].handle
+    sims["SIM1"].handle = lambda line: (time.sleep(0.3) if line == "?>" else None) or original(line)
+    ctl.connect()
+    assert controls_for(ctl.snapshot).connect_label == "Cancel"
+    ctl.cancel_connect()
+    assert ctl.snapshot.conn is ConnState.DISCONNECTED
+    scheduler.settle(40)
+    assert ctl.snapshot.conn is ConnState.DISCONNECTED  # the late connect result is ignored
+    assert ctl._worker._laser is None  # and its port was released
+
+
+# ---- disconnect, lost link, off not confirmed ----
+
+def test_disconnect_turns_laser_off(make, scheduler, sims):
+    ctl, messages = make()
+    emitting(ctl, scheduler)
     ctl.disconnect()
-    wait_for(lambda: not ctl.status.connected)
-    assert not sim.devices[0].emitting and not sim.ports[0].is_open
-    connect(ctl)
-    ctl.turn_on()
-    wait_for(lambda: ctl.status.emitting)
-    ctl.shutdown()
-    assert not sim.devices[1].emitting and not sim.ports[1].is_open
+    scheduler.run_until(lambda: ctl.snapshot.conn is ConnState.DISCONNECTED)
+    assert sims["SIM1"].emission is False
+    assert ctl.snapshot.emission is Emission.OFF and not ctl.snapshot.emission_warning
 
 
-def test_unanswered_laser_drops_connection_and_warns_off_unconfirmed(rig):
-    ctl, sim = rig
-    connect(ctl)
-    ctl.turn_on()
-    wait_for(lambda: ctl.status.emitting)
-    messages(ctl)
-    sim.devices[0].mute = True                # laser stops answering (reads time out)
-    wait_for(lambda: not ctl.status.connected)
-    msgs = messages(ctl)
-    assert any(m.text == OFF_UNCONFIRMED and m.level == "error" for m in msgs)
+def test_lost_link_while_emitting_warns_that_laser_may_be_on(make, scheduler, sims):
+    ctl, messages = make()
+    emitting(ctl, scheduler)
+    sims["SIM1"].responsive = False
+    ctl.refresh_status()
+    scheduler.run_until(lambda: ctl.snapshot.conn is ConnState.ERROR)
+    assert sims["SIM1"].emission is True  # the off could not reach it
+    assert ctl.snapshot.emission is Emission.UNKNOWN and ctl.snapshot.emission_warning
+    assert messages[-1].level == "error"
 
 
-def test_garbled_on_reply_turns_off_and_disconnects(rig):
-    ctl, sim = rig
-    connect(ctl)
-    sim.devices[0].mute = True
-    ctl.turn_on()
-    wait_for(lambda: not ctl.status.connected)
-    assert sim.devices[0].received.count("L=0") >= 2     # off attempted after the failed ON
+def test_off_to_silent_laser_is_not_reported_as_off(make, scheduler, sims):
+    ctl, messages = make()
+    emitting(ctl, scheduler)
+    sims["SIM1"].responsive = False
+    ctl.laser_off()
+    scheduler.run_until(lambda: ctl.snapshot.conn is ConnState.ERROR)
+    assert sims["SIM1"].emission is True
+    assert ctl.snapshot.emission_warning
+    assert any(m.title == "Off not confirmed" for m in messages)
 
 
-@pytest.mark.parametrize("rig", [LOW_POWER_LASER], indirect=True)
-def test_camera_mode_refused_on_laser_below_50mw(rig):
-    ctl, sim = rig
-    connect(ctl)
-    ctl.apply_power(12)
-    ctl.turn_on()
-    wait_for(lambda: ctl.status.emitting)
-    messages(ctl)
-    ctl.set_mode(Mode.CAMERA)
-    wait_for(lambda: any(m.level == "error" for m in messages(ctl)))
-    assert ctl.status.emitting and ctl.status.mode is Mode.MANUAL   # untouched
-    assert "EXT=1" not in sim.devices[0].received
+def test_disconnect_from_silent_laser_keeps_warning(make, scheduler, sims):
+    ctl, messages = make()
+    emitting(ctl, scheduler)
+    sims["SIM1"].responsive = False
+    ctl.disconnect()
+    scheduler.run_until(lambda: ctl.snapshot.conn is ConnState.DISCONNECTED)
+    assert ctl.snapshot.emission_warning
+    assert messages[-1].title == "Laser may still be on"
 
 
-@pytest.mark.parametrize("rig", [LOW_POWER_LASER], indirect=True)
-def test_rejected_set_mode_reports_busy_then_idle(rig):
-    ctl, _ = rig
-    connect(ctl)
-    drain(ctl)
-    ctl.set_mode(Mode.CAMERA)
-    events = []
-    wait_for(lambda: events.extend(drain(ctl)) or any(
-        isinstance(e, MessageEvent) and e.level == "error" for e in events))
-    wait_idle(ctl)
-    events.extend(drain(ctl))
-    busy = [e.status.busy for e in events if isinstance(e, StatusEvent)]
-    # Polling may add busy=False snapshots around it, but the attempt itself
-    # publishes exactly one busy=True, immediately followed by busy=False.
-    assert busy.count(True) == 1
-    assert busy[busy.index(True) + 1] is False
-    assert not ctl.status.busy and ctl.status.mode is Mode.MANUAL
+def test_lost_link_while_off_does_not_warn(make, scheduler, sims):
+    ctl, _ = make()
+    ready(ctl, scheduler)
+    sims["SIM1"].responsive = False
+    ctl.refresh_status()
+    scheduler.run_until(lambda: ctl.snapshot.conn is ConnState.ERROR)
+    assert ctl.snapshot.emission is Emission.OFF and not ctl.snapshot.emission_warning
 
 
-def test_manual_power_has_no_app_limit(rig):
-    ctl, sim = rig
-    connect(ctl)
-    ctl.apply_power(0.2)                      # below the laser's minimum: still sent
-    wait_for(lambda: ctl.status.setpoint_mw == 0.2)
-    assert "P=0.2" in sim.devices[0].received
+# ---- shutdown ----
+
+def test_shutdown_turns_off_and_calls_back(make, scheduler, sims):
+    ctl, _ = make()
+    emitting(ctl, scheduler)
+    done = []
+    ctl.shutdown(on_done=lambda: done.append(True))
+    scheduler.run_until(lambda: bool(done))
+    assert sims["SIM1"].emission is False
 
 
-def test_refused_turn_on_is_followed_by_verified_off(rig):
-    ctl, sim = rig
-    connect(ctl)
-    sim.devices[0].interlock_closed = False
-    n = len(sim.devices[0].received)
-    ctl.turn_on()
-    wait_for(lambda: "?L" in sim.devices[0].received[n + 1:])
-    wait_idle(ctl)
-    sent = sim.devices[0].received[n:]
-    assert sent[0] == "L=1" and "L=0" in sent                # off sent and read back
-    assert not ctl.status.emitting and ctl.status.connected
+def test_shutdown_with_silent_laser_asks_instead_of_closing(make, scheduler, sims):
+    ctl, _ = make()
+    emitting(ctl, scheduler)
+    sims["SIM1"].responsive = False
+    done, unsafe = [], []
+    ctl.shutdown(on_done=lambda: done.append(True), on_unsafe=unsafe.append)
+    scheduler.run_until(lambda: bool(unsafe))
+    assert unsafe == [False] and not done
+    ctl.cancel_shutdown()  # the user chose to stay
+    assert ctl.snapshot.conn is ConnState.DISCONNECTED and ctl.snapshot.emission_warning
+
+
+def test_shutdown_timeout_then_keep_waiting(make, scheduler, sims):
+    ctl, _ = make()
+    emitting(ctl, scheduler)
+    original = sims["SIM1"].handle
+    sims["SIM1"].handle = lambda line: (time.sleep(0.6) if line == "L=0" else None) or original(line)
+    done, unsafe = [], []
+    ctl.shutdown(on_done=lambda: done.append(True), on_unsafe=unsafe.append, timeout_s=0.1)
+    scheduler.run_until(lambda: bool(unsafe))
+    assert unsafe == [True]
+    ctl.shutdown(on_done=lambda: done.append(True), on_unsafe=unsafe.append, timeout_s=5)  # "No": keep waiting
+    scheduler.run_until(lambda: bool(done))
+    assert sims["SIM1"].emission is False
+
+
+def test_shutdown_while_connecting_closes_at_once(make, scheduler, sims):
+    ctl, _ = make()
+    original = sims["SIM1"].handle
+    sims["SIM1"].handle = lambda line: (time.sleep(0.3) if line == "?>" else None) or original(line)
+    ctl.connect()
+    done, unsafe = [], []
+    ctl.shutdown(on_done=lambda: done.append(True), on_unsafe=unsafe.append)
+    scheduler.run_until(lambda: bool(done), timeout_s=1)
+    assert not unsafe
+
+
+def test_closing_twice_does_not_queue_a_second_shutdown(make, scheduler, sims):
+    ctl, _ = make()
+    emitting(ctl, scheduler)
+    done = []
+    ctl.shutdown(on_done=lambda: done.append(1))
+    ctl.shutdown(on_done=lambda: done.append(2))  # user clicks the close button again
+    scheduler.run_until(lambda: bool(done))
+    scheduler.settle()
+    assert done == [2]  # one shutdown, latest callback
+    assert sims["SIM1"].emission is False
+
+
+# ---- resilience ----
+
+def test_pump_survives_a_failing_ui_callback(make, scheduler, sims):
+    ctl, _ = make()
+    calls = []
+
+    def bad(_snap):
+        calls.append(1)
+        raise RuntimeError("UI bug")
+
+    ctl.subscribe(lambda s: None)
+    ctl._state_cbs.append(bad)
+    connected(ctl, scheduler)  # would hang if the pump had died
+    assert calls and ctl.snapshot.connected
+
+
+@pytest.mark.parametrize("snap, expected", [
+    (Snapshot(), dict(port_select=True, connect=True, connect_label="Connect", mode_select=True,
+                      power_edit=False, laser_on=False, laser_off=False)),
+    (Snapshot(conn=ConnState.CONNECTING), dict(port_select=False, connect=True, connect_label="Cancel",
+                                               mode_select=False)),
+    (Snapshot(conn=ConnState.CONNECTED), dict(connect_label="Disconnect", power_edit=True, laser_on=True,
+                                              laser_off=True)),
+    (Snapshot(conn=ConnState.CONNECTED, emission=Emission.UNKNOWN), dict(laser_on=False, laser_off=True)),
+    (Snapshot(conn=ConnState.CONNECTED, mode=Mode.CAMERA), dict(power_edit=False, laser_on=True)),
+    (Snapshot(conn=ConnState.CONNECTED, busy=True, emission=Emission.ON), dict(laser_on=False, laser_off=True)),
+    (Snapshot(conn=ConnState.CONNECTED, applying=Mode.CAMERA), dict(mode_select=False, laser_on=False)),
+    (Snapshot(conn=ConnState.ERROR), dict(connect_label="Retry", port_select=True, laser_off=False)),
+])
+def test_controls_for(snap, expected):
+    controls = controls_for(snap)
+    for name, value in expected.items():
+        assert getattr(controls, name) == value, name
+
+
+def test_confirmed_off_helper(sims):
+    laser = sequences.open_laser("SIM1", 0.1)
+    assert sequences.laser_off_confirmed(laser) is True
+    sims["SIM1"].responsive = False
+    assert sequences.laser_off_confirmed(laser) is False

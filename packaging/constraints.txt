@@ -1,0 +1,8 @@
+# Exact versions for reproducible builds (used by packaging/build_windows.bat and CI).
+# Update deliberately: bump, run the full test suite on Windows, rebuild.
+pyserial==3.5
+pillow==13.0.0
+pyinstaller==6.22.3
+pyinstaller-hooks-contrib==2026.9
+pytest==9.2.0
+pytest-timeout==2.4.0

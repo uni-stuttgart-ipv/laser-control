@@ -1,23 +1,48 @@
-# Python
+# ---- not part of the app (kept locally only) ----
+docs/
+design/
+
+# ---- Python ----
 __pycache__/
 *.py[cod]
 *.egg-info/
 *.dist-info/
+.eggs/
+
+# ---- virtual environments ----
 .venv/
 .venv-build/
-.pytest_cache/
-.ruff_cache/
-.mypy_cache/
+venv/
+env/
 
-# Briefcase (generated; see docs/building.md)
+# ---- tests and tooling caches ----
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+
+# ---- build output (PyInstaller, Inno Setup; old Briefcase folders) ----
+# The spec file in packaging/ is source and stays tracked.
 build/
 dist/
-logs/
-build_support/
+packaging/Output/
+*.manifest
 .briefcase/
+build_support/
 
-# Editors and OS
+# ---- logs (the app itself logs to the user's settings folder, not here) ----
+logs/
+*.log
+
+# ---- editors and IDEs ----
 .idea/
 .vscode/
+*.swp
+*~
+
+# ---- operating systems ----
 .DS_Store
 Thumbs.db
+desktop.ini

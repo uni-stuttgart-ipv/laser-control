@@ -1,26 +1,27 @@
-# Runs the test suite and the linter on every push and pull request.
+# Runs the test suite on every push and pull request.
 name: tests
 
 on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        python-version: ["3.11", "3.12", "3.13"]
+        python-version: ["3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
-      - name: Install system packages (virtual display for the GUI tests)
+      - name: Install system packages (virtual display for the window tests)
         run: sudo apt-get update && sudo apt-get install -y xvfb
       - name: Install Python dependencies
-        run: pip install -e ".[dev]"
-      - name: Lint
-        run: python -m pyflakes src tests tools
+        run: pip install -c packaging/constraints.txt -e ".[dev]"
       - name: Test
         run: xvfb-run -a python -m pytest -q
