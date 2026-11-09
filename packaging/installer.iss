@@ -20,7 +20,7 @@ PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputBaseFilename=LaserControl-Setup-{#AppVersion}
-SetupIconFile=..\resources\laser_control.ico
+SetupIconFile=..\src\laser_control\assets\laser_control.ico
 UninstallDisplayIcon={app}\{#AppExe}
 Compression=lzma2
 SolidCompression=yes
@@ -38,7 +38,6 @@ Source: "..\dist\LaserControl\*"; DestDir: "{app}"; Flags: recursesubdirs ignore
 
 [Icons]
 Name: "{group}\{#AppName}"; Filename: "{app}\{#AppExe}"
-Name: "{group}\{#AppName} (simulation)"; Filename: "{app}\{#AppExe}"; Parameters: "--simulate"
 Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopicon
 
 [Run]

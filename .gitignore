@@ -1,48 +1,54 @@
-# ---- not part of the app (kept locally only) ----
-docs/
-design/
+# Only the app's source, tests, packaging and docs are tracked.
+# Everything below is created on your machine and should stay there.
+
+# ---- Claude Code (local assistant settings and notes) ----
+.claude/
+CLAUDE.md
+CLAUDE.local.md
+.mcp.json
 
 # ---- Python ----
 __pycache__/
 *.py[cod]
 *.egg-info/
-*.dist-info/
-.eggs/
+*.egg
 
 # ---- virtual environments ----
 .venv/
-.venv-build/
 venv/
 env/
 
-# ---- tests and tooling caches ----
+# ---- tests and code checkers ----
 .pytest_cache/
 .coverage
-.coverage.*
 htmlcov/
 .mypy_cache/
 .ruff_cache/
 
-# ---- build output (PyInstaller, Inno Setup; old Briefcase folders) ----
-# The spec file in packaging/ is source and stays tracked.
+# ---- build output (PyInstaller, Inno Setup) ----
 build/
 dist/
 packaging/Output/
-*.manifest
-.briefcase/
-build_support/
 
-# ---- logs (the app itself logs to the user's settings folder, not here) ----
-logs/
+# ---- secrets and local settings ----
+.env
+.env.*
+
+# ---- logs and temporary files ----
 *.log
-
-# ---- editors and IDEs ----
-.idea/
-.vscode/
+*.tmp
+*.bak
+*.orig
 *.swp
 *~
 
+# ---- editors ----
+.idea/
+.vscode/
+
 # ---- operating systems ----
 .DS_Store
+._*
 Thumbs.db
-desktop.ini
+Desktop.ini
+$RECYCLE.BIN/

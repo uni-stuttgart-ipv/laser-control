@@ -1,5 +1,5 @@
 @echo off
-rem Build Laser Control on a Windows PC: tests, one-folder exe, then the installer if Inno Setup is present.
+rem Build Laser Control on a Windows PC: tests, the one-folder exe, then the installer if Inno Setup is present.
 rem Run from the repo root in a normal Command Prompt. Needs Python 3.13 x64 from python.org.
 setlocal
 cd /d "%~dp0.."
@@ -14,9 +14,7 @@ for /f %%v in ('python -c "import laser_control; print(laser_control.__version__
 
 pytest -q || goto :error
 pyinstaller --noconfirm --clean packaging\LaserControl.spec || goto :error
-rem start /wait: a windowed exe would otherwise return before it finishes
-start "" /wait dist\LaserControl\LaserControl.exe --smoke-test || goto :error
-echo Built dist\LaserControl\LaserControl.exe (version %VERSION%, smoke test passed)
+echo Built dist\LaserControl\LaserControl.exe (version %VERSION%)
 
 set ISCC="C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
 if exist %ISCC% (

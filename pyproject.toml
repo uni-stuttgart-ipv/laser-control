@@ -10,16 +10,17 @@ readme = "README.md"
 requires-python = ">=3.12,<3.14"
 license = "MIT"
 dependencies = [
+  "coherent-cube",
   "pyserial>=3.5,<4",
   "pillow>=10",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "pytest-timeout>=2"]
+dev = ["pytest>=8"]
 build = ["pyinstaller>=6.10"]
 
 [project.gui-scripts]
-laser-control = "laser_control.app:main"
+laser-control = "laser_control.__main__:main"
 
 [tool.hatch.version]
 path = "src/laser_control/__init__.py"
@@ -27,8 +28,6 @@ path = "src/laser_control/__init__.py"
 [tool.hatch.build.targets.wheel]
 packages = ["src/laser_control"]
 
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-timeout = 20
-# The driver's __del__ raises AttributeError when its constructor failed (busy/silent ports). Harmless.
-filterwarnings = ["ignore::pytest.PytestUnraisableExceptionWarning"]

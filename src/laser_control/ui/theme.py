@@ -43,6 +43,7 @@ WARN_BG = "#FADFDA"
 WARN_ZONE = "#EE9C92"
 ERR = "#C23B2E"
 ERR_BG = "#F8D9D4"
+LOG_WARN = "#A66300"   # warnings in the Log tab: a dark amber that is easy to read on BASE
 
 # ---- emission: the app's amber at full glow, used only while the laser is on ----
 EMIT = "#F29A12"
@@ -91,6 +92,7 @@ class Fonts:
     body: tkfont.Font
     small: tkfont.Font
     tiny: tkfont.Font
+    mono: tkfont.Font   # the Log tab's technical view: columns line up, replies read exactly as sent
 
 
 _DISPLAY_LIGHT = ("Segoe UI Variable Display Light", "Segoe UI Light", "Helvetica Neue Light", "Helvetica Neue")
@@ -98,6 +100,7 @@ _DISPLAY = ("Segoe UI Variable Display", "Segoe UI", "Helvetica Neue")
 _DISPLAY_SEMI = ("Segoe UI Variable Display Semibold", "Segoe UI Semibold", "Helvetica Neue")
 _TEXT = ("Segoe UI Variable Text", "Segoe UI", "Helvetica Neue")
 _TEXT_SEMI = ("Segoe UI Variable Text Semibold", "Segoe UI Semibold", "Helvetica Neue")
+_MONO = ("Consolas", "Menlo", "Courier New")
 
 
 def _pick(root: tk.Tk, candidates: tuple[str, ...]) -> str:
@@ -132,4 +135,5 @@ def make_fonts(root: tk.Tk, scale: float) -> Fonts:
         body=f(text, 12.5),
         small=f(text, 12),
         tiny=f(text, 11),
+        mono=f(_pick(root, _MONO), 10),
     )

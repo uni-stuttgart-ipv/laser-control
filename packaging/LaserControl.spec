@@ -7,7 +7,6 @@
 # One-folder (not one-file) starts faster and trips antivirus heuristics less,
 # because nothing is unpacked to %TEMP% on every launch.
 
-import sys
 from PyInstaller.utils.hooks import collect_data_files
 
 ROOT = SPECPATH + "/.."
@@ -26,8 +25,7 @@ exe = EXE(
     [],
     exclude_binaries=True,
     name="LaserControl",
-    console=False,                                         # windowed: logs go to the log file
-    # Exe / app-bundle icon, from the artwork originals in resources/.
-    icon=ROOT + ("/resources/laser_control.ico" if sys.platform == "win32" else "/resources/laser_control.icns"),
+    console=False,                                         # windowed: no console window
+    icon=ROOT + "/src/laser_control/assets/laser_control.ico",
 )
 coll = COLLECT(exe, a.binaries, a.datas, name="LaserControl")

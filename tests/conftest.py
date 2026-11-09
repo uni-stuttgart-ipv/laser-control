@@ -1,96 +1,155 @@
-"""Shared fixtures: a fresh simulated laser per test and a fake Tk scheduler."""
-
-from __future__ import annotations
-
-import gc
-import time
-from typing import Callable
+"""Shared test helpers: a fake laser and a controller that uses it; a fake controller and a window."""
+import threading
+import tkinter as tk
+import warnings
 
 import pytest
+import serial
 
-from laser_control import sequences, sim
+from laser_control import controller
+from laser_control.ui.window import MainWindow
+
+# The CoherentCube properties that send a command when you assign to them.
+# analog_control_mode is missing on purpose: in the library it is a method, so
+# assigning to it sends nothing (see camera.py).
+SENDING_PROPERTIES = {"power", "operation_mode", "analog_control"}
 
 
-@pytest.fixture(autouse=True)
-def collect_garbage_on_main_thread():
-    """Free leftovers from earlier tests here, on the main thread, before each test.
+class FakeLaser:
+    """Stands in for CoherentCube: records every command instead of sending it."""
 
-    Destroyed Tk windows from the window tests linger in reference cycles until
-    Python's garbage collector runs, and it runs in whichever thread happens to
-    trigger it. Tk objects must be freed on the thread that created them: when
-    the collector ran inside a laser worker thread on Linux CI, freeing a Tk
-    interpreter there blocked the worker and a worker test timed out.
+    min_power = 0.5
+
+    def __init__(self, port, timeout=None, write_timeout=None):
+        self.port = port
+        self.sent = []              # every command, in order: (name, value)
+        self.refuse_reason = None   # set it to make on() refuse, like an open interlock
+        self.broken = False         # set it to make every command fail, like a pulled cable
+        self.current_ma = 0.0
+
+    def __setattr__(self, name, value):
+        if name in SENDING_PROPERTIES:
+            self._send(name, value)
+        object.__setattr__(self, name, value)
+
+    def _send(self, name, value=None):
+        if self.broken:
+            raise serial.SerialException("device disconnected")
+        self.sent.append((name, value))
+
+    def on(self):
+        self._send("on")
+        if self.refuse_reason:
+            warnings.warn(f"Can not turn laser on due to {self.refuse_reason}.")
+
+    def off(self):
+        self._send("off")
+
+    def calibrate(self, power):
+        self._send("calibrate", power)
+
+    def close(self):
+        self.sent.append(("close", None))   # closing works even with the cable pulled
+
+    @property
+    def current(self):
+        self._send("current")
+        return self.current_ma
+
+
+@pytest.fixture
+def ctl(monkeypatch):
+    """A Controller whose CoherentCube is the FakeLaser."""
+    monkeypatch.setattr(controller, "CoherentCube", FakeLaser)
+    c = controller.Controller()
+    yield c
+    c.shut_down()
+
+
+def wait(ctl):
+    """Wait until every queued job has run, then return the results.
+
+    Jobs run in order, so once this marker job runs, all earlier ones are done.
     """
-    gc.collect()
-    yield
+    done = threading.Event()
+    ctl._jobs.put((done.set, ()))
+    assert done.wait(timeout=2), "the controller's thread did not finish its jobs"
+    return ctl.get_results()
+
+
+def connect(ctl, mode="manual", power=5):
+    """Connect to a fake laser, and return it with its command log cleared."""
+    ctl.connect("COM3", mode, power)
+    wait(ctl)
+    laser = ctl.laser
+    laser.sent.clear()
+    return laser
+
+
+# ---- the window, with a fake controller ----
+
+
+class FakeController:
+    """Records what the window asks for; the test decides what the laser answers."""
+
+    def __init__(self):
+        self.calls = []
+        self.results = []
+
+    def get_ports(self):
+        return ["COM3"]
+
+    def get_results(self):
+        results, self.results = self.results, []
+        return results
+
+    def connect(self, port, mode, power):
+        self.calls.append(("connect", port, mode, power))
+
+    def disconnect(self):
+        self.calls.append(("disconnect",))
+
+    def turn_on(self):
+        self.calls.append(("turn_on",))
+
+    def turn_off(self):
+        self.calls.append(("turn_off",))
+
+    def use_mode(self, mode, power):
+        self.calls.append(("use_mode", mode, power))
+
+    def set_power(self, power):
+        self.calls.append(("set_power", power))
 
 
 @pytest.fixture
-def sims():
-    """Install the simulator for one test; yields the port -> LaserSim registry."""
-    registry = sim.install(sim.default_registry(), realtime=False)
-    yield registry
-    sim.uninstall()
+def root():
+    try:
+        root = tk.Tk()
+    except tk.TclError:
+        pytest.skip("no display for Tk")
+    root.withdraw()
+    yield root
+    root.destroy()
 
 
 @pytest.fixture
-def policy():
-    """Restore the analog-mode policy after tests that change it."""
-    saved = sequences.ANALOG_MODE_POLICY
-    yield
-    sequences.ANALOG_MODE_POLICY = saved
+def win(root):
+    return MainWindow(root, FakeController())
 
 
-def commands(log: list[str]) -> list[str]:
-    """Drop queries from a simulator log, leaving only state-changing commands."""
-    return [line for line in log if not line.startswith("?")]
+def answer(win, *results):
+    """Let the fake laser answer, then let the window collect it like its 100 ms poll does."""
+    win.ctl.results.extend(results)
+    win._poll()
 
 
-class FakeScheduler:
-    """Stands in for ``tk.Tk.after`` with a virtual clock.
-
-    ``step()`` advances virtual time by ``tick_ms`` and runs whatever is due.
-    The controller's worker thread is real, so tests wait on it with
-    :meth:`run_until`.
-    """
-
-    def __init__(self, tick_ms: int = 50):
-        self.now = 0
-        self.tick_ms = tick_ms
-        self._queue: list[tuple[int, int, Callable[[], None]]] = []
-        self._seq = 0
-
-    def after(self, ms: int, func: Callable[[], None]) -> str:
-        self._seq += 1
-        self._queue.append((self.now + ms, self._seq, func))
-        return str(self._seq)
-
-    def after_cancel(self, id: str) -> None:
-        self._queue = [item for item in self._queue if str(item[1]) != id]
-
-    def step(self) -> None:
-        self.now += self.tick_ms
-        due = sorted(item for item in self._queue if item[0] <= self.now)
-        self._queue = [item for item in self._queue if item[0] > self.now]
-        for _, _, func in due:
-            func()
-
-    def run_until(self, predicate: Callable[[], bool], timeout_s: float = 5.0) -> None:
-        """Step until ``predicate()`` is true; fail the test after ``timeout_s`` of real time."""
-        end = time.monotonic() + timeout_s
-        while not predicate():
-            if time.monotonic() > end:
-                raise AssertionError("condition not reached in time")
-            self.step()
-            time.sleep(0.002)
-
-    def settle(self, steps: int = 10) -> None:
-        """Run a few steps, giving the worker time to finish queued jobs."""
-        for _ in range(steps):
-            self.step()
-            time.sleep(0.005)
+def run_for(root, ms):
+    """Run the Tk event loop for `ms` milliseconds, so after() timers can fire."""
+    root.after(ms, root.quit)
+    root.mainloop()
 
 
-@pytest.fixture
-def scheduler():
-    return FakeScheduler()
+def connected(win, mode="manual"):
+    answer(win, ("connected", 0.5), ("mode", mode), ("power", 5.0))
+    return win
