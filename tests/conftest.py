@@ -1,5 +1,6 @@
 """Shared test helpers: a fake laser and a controller that uses it; a fake controller and a window."""
 import threading
+import time
 import tkinter as tk
 import warnings
 
@@ -122,12 +123,27 @@ class FakeController:
         self.calls.append(("set_power", power))
 
 
+TK_ATTEMPTS = 3   # see root()
+
+
 @pytest.fixture
 def root():
-    try:
-        root = tk.Tk()
-    except tk.TclError as error:
-        pytest.skip(f"Tk could not start: {error}")   # the reason is printed at the end of the run
+    """A hidden Tk window for one test.
+
+    On GitHub's Windows machine, starting Tk sometimes fails for a moment:
+    "couldn't read file .../tcl8.6/init.tcl: No error". The file is there; something
+    else on the machine briefly holds it. So try a few times before giving up.
+    The app starts Tk only once, the tests about 50 times, which is why only
+    the tests run into it.
+    """
+    for attempt in range(TK_ATTEMPTS):
+        try:
+            root = tk.Tk()
+            break
+        except tk.TclError as error:
+            if attempt == TK_ATTEMPTS - 1:
+                pytest.skip(f"Tk could not start: {error}")   # the reason is printed at the end of the run
+            time.sleep(0.2)
     root.withdraw()
     yield root
     root.destroy()
