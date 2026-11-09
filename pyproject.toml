@@ -31,3 +31,4 @@ packages = ["src/laser_control"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-rs"   # list every skipped test with its reason

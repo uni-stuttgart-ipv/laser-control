@@ -126,8 +126,8 @@ class FakeController:
 def root():
     try:
         root = tk.Tk()
-    except tk.TclError:
-        pytest.skip("no display for Tk")
+    except tk.TclError as error:
+        pytest.skip(f"Tk could not start: {error}")   # the reason is printed at the end of the run
     root.withdraw()
     yield root
     root.destroy()
