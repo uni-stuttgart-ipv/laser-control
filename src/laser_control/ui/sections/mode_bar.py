@@ -7,8 +7,8 @@
     └───────────────┴───────────────┘
     Continuous. You set the power on the dial.
 
-The switch is locked while the laser is on: the mode only changes while it is
-off (``State.can_switch_mode``).
+The mode can be switched while the laser is on or off; the laser stays as it
+was. Only while connecting is the switch locked (``State.can_switch_mode``).
 """
 
 from __future__ import annotations
@@ -73,9 +73,7 @@ def draw(win: MainWindow, y: float) -> float:
 
     # The hint line under the bar
     hint_y = y + BAR_H + HINT_GAP
-    if s.laser_on:
-        hint = "Turn the laser off to switch mode."
-    elif s.mode == "camera":
+    if s.mode == "camera":
         hint = f"Pulsed. The camera drives power, calibrated at {CAMERA_POWER_MW} mW."
     else:
         hint = "Continuous. You set the power on the dial."

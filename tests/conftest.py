@@ -7,7 +7,7 @@ import warnings
 import pytest
 import serial
 
-from laser_control import controller
+from laser_control import camera, controller
 from laser_control.ui.window import MainWindow
 
 # The CoherentCube properties that send a command when you assign to them.
@@ -56,6 +56,12 @@ class FakeLaser:
     def current(self):
         self._send("current")
         return self.current_ma
+
+
+@pytest.fixture(autouse=True)
+def no_warm_up_wait(monkeypatch):
+    """camera.apply runs the laser 1 s before calibrating; the fake laser needs no time."""
+    monkeypatch.setattr(camera, "WARM_UP_S", 0)
 
 
 @pytest.fixture

@@ -18,7 +18,7 @@ log = logging.getLogger(__name__)                  # technical lines: each actio
 events = logging.getLogger("laser_control.events")  # plain-words lines: one per result (see _report)
 
 MAX_POWER_MW = 50      # highest power the window allows in manual mode
-CAMERA_POWER_MW = 50   # camera mode power and calibration, from the professor's script
+CAMERA_POWER_MW = 50   # camera mode: output power and calibration power
 TIMEOUT_S = 2          # how long to wait for a reply from the laser
 
 
@@ -76,7 +76,7 @@ class Controller:
         self._jobs.put((self._turn_off, ()))
 
     def use_mode(self, mode, power):
-        """Switch to `mode` ("camera" or "manual"); only allowed while the laser is off."""
+        """Switch to `mode` ("camera" or "manual"); the laser stays on or off as it was."""
         self._jobs.put((self._use_mode, (mode, power)))
 
     def set_power(self, power):
@@ -147,16 +147,20 @@ class Controller:
         self._report_current()
 
     def _use_mode(self, mode, power):
-        if self.laser_is_on:
-            self._report("refused", "Turn the laser off to switch mode.")
-            return
-        if mode == "camera":
-            camera.apply(self.laser, CAMERA_POWER_MW)
+        if mode == "camera":                        # 1 s continuous at full power, calibrate, then on in pulse mode
+            with warnings.catch_warnings(record=True) as caught:
+                warnings.simplefilter("always")
+                camera.apply(self.laser, CAMERA_POWER_MW)
+            refused = [w for w in caught if str(w.message).startswith("Can not turn laser on")]
+            self.laser_is_on = not refused         # e.g. interlock open: it never turned on
+            self._report("laser", self.laser_is_on)
             self._report("mode", "camera")
             self._report("power", CAMERA_POWER_MW)   # no query right after calibrate
+            if refused:
+                self._report("refused", str(refused[0].message))
         else:
             power = self._limit(power)
-            manual.apply(self.laser, power)
+            manual.apply(self.laser, power)          # the laser stays on or off as it was
             self._report("mode", "manual")
             self._report("power", power)
 

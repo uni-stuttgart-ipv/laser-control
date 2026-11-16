@@ -100,10 +100,15 @@ def test_power_is_editable_only_when_connected_in_manual_mode():
     assert not connected_state("camera").power_editable
 
 
-def test_the_mode_switch_is_locked_while_the_laser_is_on():
+def test_the_mode_can_be_switched_while_the_laser_is_on():
     s = connected_state()
-    assert s.can_switch_mode
     s.apply("laser", True)
+    assert s.can_switch_mode
+
+
+def test_the_mode_switch_is_locked_while_connecting():
+    s = State("COM3")
+    s.connecting = True
     assert not s.can_switch_mode
 
 

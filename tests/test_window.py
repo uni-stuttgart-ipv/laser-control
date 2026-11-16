@@ -112,12 +112,12 @@ def test_the_key_turns_on_then_off(win):
     assert win.ctl.calls == [("turn_on",), ("turn_off",)]
 
 
-def test_mode_buttons_are_locked_while_the_laser_is_on(win):
+def test_mode_buttons_work_while_the_laser_is_on(win):
     connected(win)
     answer(win, ("laser", True))
-    assert not win.buttons.registered["btn:mode-camera"].enabled
-    answer(win, ("laser", False))
     assert win.buttons.registered["btn:mode-camera"].enabled
+    win.mode_clicked("camera")
+    assert win.ctl.calls == [("use_mode", "camera", 5.0)]
 
 
 def test_choosing_a_mode_before_connecting_only_remembers_it(win):

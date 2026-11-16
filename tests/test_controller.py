@@ -26,7 +26,7 @@ def test_connect_in_camera_mode_calibrates_and_asks_nothing_after(ctl):
     ctl.connect("COM3", "camera", 5)
     results = wait(ctl)
     assert ctl.laser.sent[-1] == ("calibrate", CAMERA_POWER_MW)   # no query right after calibrate
-    assert results[-2:] == [("mode", "camera"), ("power", CAMERA_POWER_MW)]
+    assert results[-3:] == [("laser", True), ("mode", "camera"), ("power", CAMERA_POWER_MW)]
 
 
 def test_connect_to_a_missing_port_reports_an_error(ctl, monkeypatch):
@@ -119,21 +119,45 @@ def test_power_changes_are_sent_in_order(ctl):
 
 # ---- switching mode ----
 
-def test_switch_to_camera_while_off(ctl):
+def test_switch_to_camera_while_off_turns_on_and_calibrates_at_full_power(ctl):
     laser = connect(ctl)
     ctl.use_mode("camera", 5)
-    assert wait(ctl) == [("mode", "camera"), ("power", CAMERA_POWER_MW)]
-    assert laser.sent[-1] == ("calibrate", CAMERA_POWER_MW)
+    assert wait(ctl) == [("laser", True), ("mode", "camera"), ("power", CAMERA_POWER_MW)]
+    on, calibrate = laser.sent.index(("on", None)), laser.sent.index(("calibrate", CAMERA_POWER_MW))
+    assert laser.sent[on - 1] == ("power", CAMERA_POWER_MW) and on < calibrate   # emitting 50 mW while it calibrates
+    assert ctl.laser_is_on
 
 
-def test_switch_mode_while_on_is_refused_and_sends_nothing(ctl):
+def test_camera_refused_by_the_interlock_stays_off_and_says_why(ctl):
+    laser = connect(ctl)
+    laser.refuse_reason = "interlock open"
+    ctl.use_mode("camera", 5)
+    assert wait(ctl) == [("laser", False), ("mode", "camera"), ("power", CAMERA_POWER_MW),
+                         ("refused", "Can not turn laser on due to interlock open.")]
+    assert not ctl.laser_is_on
+
+
+def test_switch_to_camera_while_on_stays_on(ctl):
     laser = connect(ctl)
     ctl.turn_on()
     wait(ctl)
     laser.sent.clear()
     ctl.use_mode("camera", 5)
-    assert wait(ctl) == [("refused", "Turn the laser off to switch mode.")]
-    assert laser.sent == []
+    assert wait(ctl) == [("laser", True), ("mode", "camera"), ("power", CAMERA_POWER_MW)]
+    assert laser.sent[-1] == ("calibrate", CAMERA_POWER_MW)
+    assert ("off", None) not in laser.sent and ctl.laser_is_on
+
+
+def test_switch_to_manual_while_on_stays_on(ctl):
+    laser = connect(ctl, mode="camera")
+    ctl.turn_on()
+    wait(ctl)
+    laser.sent.clear()
+    ctl.use_mode("manual", 12)
+    assert wait(ctl) == [("mode", "manual"), ("power", 12)]
+    assert laser.sent == [("operation_mode", cc.OperationMode.CW), ("analog_control", cc.AnalogControl.Internal),
+                          ("power", 12)]
+    assert ctl.laser_is_on
 
 
 # ---- errors ----

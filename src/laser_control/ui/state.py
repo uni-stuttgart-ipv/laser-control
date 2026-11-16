@@ -90,8 +90,8 @@ class State:
 
     @property
     def can_switch_mode(self) -> bool:
-        """True when the Camera / Manual switch works: the mode only changes while the laser is off."""
-        return not self.laser_on and not self.connecting
+        """True when the Camera / Manual switch works: any time except while connecting (the laser stays on or off)."""
+        return not self.connecting
 
     @property
     def can_connect(self) -> bool:
