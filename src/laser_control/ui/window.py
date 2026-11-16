@@ -175,6 +175,15 @@ class MainWindow:
         else:
             self.ctl.turn_on()
 
+    def reset_clicked(self) -> None:
+        """Camera Reset: run the camera sequence again (1 s continuous at full power, calibrate, pulse)."""
+        s = self.state
+        if not s.can_reset:
+            return
+        s.resetting = True
+        self.ctl.use_mode("camera", s.power)
+        self.render()
+
     def dismiss(self) -> None:
         """The ✕ on a banner."""
         self.state.message = None

@@ -134,6 +134,38 @@ def test_choosing_a_mode_while_connected_applies_it(win):
     assert win.ctl.calls == [("use_mode", "camera", 5.0)]
 
 
+def test_reset_is_drawn_only_in_camera_mode(win):
+    connected(win)
+    assert "btn:reset" not in win.buttons.registered
+    answer(win, ("mode", "camera"))
+    assert win.buttons.registered["btn:reset"].enabled
+
+
+def test_reset_shows_greyed_out_in_camera_mode_before_connecting(win):
+    win.mode_clicked("camera")
+    assert not win.buttons.registered["btn:reset"].enabled
+
+
+def test_reset_is_the_same_size_as_the_on_off_key(win):
+    win.mode_clicked("camera")
+    reset, key = win.canvas.bbox("btn:reset.fg"), win.canvas.bbox("btn:key.fg")
+    assert win.canvas.bbox("btn:reset")[3] - win.canvas.bbox("btn:reset")[1] == \
+        win.canvas.bbox("btn:key")[3] - win.canvas.bbox("btn:key")[1]
+    assert (reset[1] + reset[3]) // 2 == (key[1] + key[3]) // 2   # centred on the same line
+
+
+def test_reset_runs_the_camera_mode_again_once(win, root):
+    connected(win, "camera")
+    root.deiconify()
+    root.update()
+    click(win, root, "btn:reset")
+    click(win, root, "btn:reset")                    # a second click while it runs does nothing
+    assert win.ctl.calls == [("use_mode", "camera", 5.0)]
+    assert not win.buttons.registered["btn:reset"].enabled
+    answer(win, ("laser", True), ("mode", "camera"), ("power", 50))
+    assert win.buttons.registered["btn:reset"].enabled
+
+
 def press_escape(root, widget):
     """Press Esc in `widget`. Keys only reach a widget with focus, so the window is shown for a moment."""
     root.deiconify()

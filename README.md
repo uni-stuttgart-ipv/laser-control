@@ -11,7 +11,7 @@ One round key turns the laser on and off. Built with Python and Tkinter for Wind
 
 > **Safety.** This app is not an interlock. If the USB cable is unplugged or the app crashes, the laser keeps its last state.
 > Turn the laser off with the round key, **Disconnect**, or by closing the window. There is no keyboard shortcut for it.
-> **Choosing Camera turns the laser on** (also when connecting in camera mode): 1 s continuous at 50 mW, then pulse mode.
+> **Choosing Camera or pressing Reset turns the laser on** (also when connecting in camera mode): 1 s continuous at 50 mW, then pulse mode.
 
 ## Run it
 
@@ -47,6 +47,7 @@ python -m laser_control
    "Applied ✓" shows when the laser has the value. The range is the laser's minimum up to 50 mW.
 3. **Camera mode:** there is no power control. The camera drives the laser.
    - Choosing Camera, from off or from Manual, first runs the laser **continuous at 50 mW for 1 s**, then switches to pulse mode and calibrates at 50 mW. The laser stays on.
+   - **Reset** (the round ↻ key, left of the on/off key on the laser card, camera mode only) runs this again: 1 s continuous at 50 mW, calibrate, pulse mode. The laser is on afterwards. It is greyed out before connecting and until a reset has finished.
    - Why: `calibrate(50)` takes the laser's output at that moment to be 50 mW. Calibrated in the dark, camera mode stays almost dark (measured: 0.06 mW, against about 21 mW).
 4. **Turn the laser on** with the round key. While it emits, the key, the window border and the title bar turn amber. You can switch mode while it's on; it stays on.
 5. **Turn it off** with the key.
@@ -121,8 +122,8 @@ pytest -q
 | `tests/test_controller.py` | connect, on/off, interlock refusal, power limits, switching mode while on, lost connection, disconnect, closing |
 | `tests/test_log.py` | the log file, the plain-words line for every result, the feed to the Log tab |
 | `tests/test_log_tab.py` | the two views, 500 lines each, scrolling and New lines, Copy, arrows, tab height, wrapping |
-| `tests/test_state.py` | what each laser result does to the screen (no window needed) |
-| `tests/test_window.py` | auto-send after 0.5 s, dial drag, typed values, limits, mode switch while on, Esc does not turn the laser off |
+| `tests/test_state.py` | what each laser result does to the screen, and when Reset shows and is locked (no window needed) |
+| `tests/test_window.py` | auto-send after 0.5 s, dial drag, typed values, limits, mode switch while on, camera Reset, Esc does not turn the laser off |
 
 The build script and GitHub Actions run the tests first, and stop if any fail.
 

@@ -4,9 +4,14 @@
 
     ┌──────────────────────────────────────┐
     │ Laser                                │
-    │ Off                           ( ⏻ )  │
+    │ Off                    ( ↻ )  ( ⏻ )  │   ↻ Reset: camera mode only
     │ Ready to turn on.                    │
     └──────────────────────────────────────┘
+
+In camera mode a round **Reset** key (↻) sits left of the on/off key, shaped
+like it. It runs the camera sequence again: 1 s continuous at full power,
+calibrate, then pulse mode, so the laser is on afterwards. It is greyed out
+before connecting and while a reset is running (``State.can_reset``).
 
 Three looks:
 
@@ -36,6 +41,7 @@ KEY_RIGHT = 14       # the key sits this far inside the card's right edge
 TEXT_X = 22          # the three text lines start this far inside the card
 GAP_BELOW = 11       # smaller than the usual gap: the message line belongs to this card
 PULSE_FRAMES = 8     # frames in one "breath" of the emitting glow
+RESET_GAP = 12       # between the camera Reset key and the on/off key
 
 
 def draw(win: MainWindow, y: float) -> float:
@@ -85,7 +91,31 @@ def draw(win: MainWindow, y: float) -> float:
                               "hover": a.icon("power", 26, hover_glyph, 2.25)})
     paint.image(win, kx, ky, bg, tags=(tag, f"{tag}.bg", "key.bg"))
     paint.icon(win, kx + r, ky + r, a.icon("power", 26, glyph, 2.25), tags=(tag, f"{tag}.fg"))
+
+    if s.show_reset:
+        draw_reset(win, kx - RESET_GAP - KEY, ky)
     return y + HEIGHT + GAP_BELOW
+
+
+def draw_reset(win: MainWindow, x: float, y: float) -> None:
+    """The camera Reset key: round like the on/off key, with a ↻ icon.
+
+    Raised while it can be pressed; flat and grey while not connected or while a
+    reset is running, like the on/off key when not connected.
+    """
+    s, a = win.state, win.art
+    r = KEY / 2
+    if s.can_reset:
+        bg, glyph = a.soft(KEY, KEY, r, "raise"), T.TEXT_2
+        looks = {"normal": bg, "press": a.soft(KEY, KEY, r, "press")}
+    else:
+        bg, glyph = a.soft(KEY, KEY, r, "raise_sm"), T.TEXT_OFF
+        looks = {"normal": bg}
+    tag = win.buttons.add("reset", s.can_reset, win.reset_clicked, bg=looks,
+                          fg={"normal": a.icon("refresh", 24, glyph, 2.25),
+                              "hover": a.icon("refresh", 24, T.AMBER_2, 2.25)})
+    paint.image(win, x, y, bg, tags=(tag, f"{tag}.bg"))
+    paint.icon(win, x + r, y + r, a.icon("refresh", 24, glyph, 2.25), tags=(tag, f"{tag}.fg"))
 
 
 def pulse_sprite(win: MainWindow, frame: int) -> Sprite:

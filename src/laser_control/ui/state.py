@@ -34,6 +34,7 @@ class State:
         self.current = None    # diode current, mA; None until it has been read
         self.message = None    # banner as (level, text), level "warning" or "error"; None for no banner
         self.tab = "laser"     # "laser" or "log": which tab is shown; the app always opens on Laser
+        self.resetting = False # camera Reset clicked; True until the laser reports the camera mode back
 
         # The value on the dial. It lives here rather than in power.py because
         # apply("connected") must clamp it to the laser's minimum. power.py only
@@ -68,6 +69,7 @@ class State:
             self.message = None                   # a successful on/off clears an old refusal
         elif kind == "mode":
             self.mode = value
+            self.resetting = False                # the camera sequence has finished
         elif kind == "power":
             self.setpoint = value
         elif kind == "current":
@@ -78,6 +80,7 @@ class State:
         self.connecting = False
         self.connected = False
         self.laser_on = False
+        self.resetting = False
         self.setpoint = None
         self.current = None
 
@@ -92,6 +95,16 @@ class State:
     def can_switch_mode(self) -> bool:
         """True when the Camera / Manual switch works: any time except while connecting (the laser stays on or off)."""
         return not self.connecting
+
+    @property
+    def show_reset(self) -> bool:
+        """True when the laser card shows the camera Reset key: in camera mode, connected or not."""
+        return self.mode == "camera"
+
+    @property
+    def can_reset(self) -> bool:
+        """True when the camera Reset key works: connected, and no reset already running."""
+        return self.connected and not self.resetting
 
     @property
     def can_connect(self) -> bool:

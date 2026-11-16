@@ -115,3 +115,29 @@ def test_the_mode_switch_is_locked_while_connecting():
 def test_connect_button_needs_a_port():
     assert not State("").can_connect
     assert State("COM3").can_connect
+
+
+# ---- camera Reset ----
+
+def test_reset_shows_in_camera_mode_and_works_only_when_connected():
+    before = State("COM3")
+    before.mode = "camera"
+    assert before.show_reset and not before.can_reset      # shown, greyed out
+    assert not connected_state("manual").show_reset
+    assert connected_state("camera").can_reset
+
+
+def test_reset_is_locked_until_the_camera_mode_comes_back():
+    s = connected_state("camera")
+    s.resetting = True
+    s.apply("laser", True)
+    assert not s.can_reset
+    s.apply("mode", "camera")
+    assert s.can_reset
+
+
+def test_an_error_during_reset_unlocks_it():
+    s = connected_state("camera")
+    s.resetting = True
+    s.apply("error", "device disconnected")
+    assert not s.resetting
